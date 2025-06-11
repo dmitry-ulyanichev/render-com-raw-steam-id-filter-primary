@@ -280,6 +280,14 @@ class FilterService {
             this.processingActive = false;
             await this.steamClient.logOff();
             await delay(5000);
+            
+            // Check if we can generate 2FA before attempting login
+            const testAuthCode = this.generateAuthCode();
+            if (!testAuthCode) {
+                console.error('[FILTER] ❌ Cannot generate 2FA code for reconnection - stopping reconnection attempts');
+                return;
+            }
+            
             this.login();
         } catch (err) {
             console.error(`[FILTER] Reconnect failed: ${err.message}. Retrying in 30 seconds...`);
@@ -300,15 +308,21 @@ class FilterService {
     login() {
         const loginOptions = {
             accountName: this.config.steam_username,
-            password: this.config.steam_password
+            password: this.config.steam_password,
+            rememberPassword: true // Reduce future 2FA requests
         };
 
         const authCode = this.generateAuthCode();
         if (authCode) {
             loginOptions.twoFactorCode = authCode;
+            console.log(`[FILTER] 🔐 Logging into Steam as ${this.config.steam_username} with 2FA...`);
+        } else {
+            console.error(`[FILTER] ❌ Cannot generate 2FA code - maFile missing or invalid`);
+            console.error(`[FILTER] ❌ Service cannot continue without automated 2FA`);
+            // Don't attempt login without 2FA - this would trigger manual prompt
+            return;
         }
 
-        console.log(`[FILTER] 🔐 Logging into Steam as ${this.config.steam_username}...`);
         this.steamClient.logOn(loginOptions);
     }
 
@@ -620,6 +634,10 @@ class FilterService {
     }
 
     isRunning() {
+        return this.running;
+    }
+    
+    isProcessingActive() {
         return this.running && this.processingActive;
     }
 }

@@ -208,6 +208,7 @@ class RenderSteamService {
             workers: {
                 uniquenessChecker: this.workers.uniquenessChecker?.isRunning() || false,
                 filterService: this.workers.filterService?.isRunning() || false,
+                filterServiceProcessing: this.workers.filterService?.isProcessingActive?.() || false,
                 submitter: this.workers.submitter?.isRunning() || false
             },
             stats: {
@@ -235,6 +236,102 @@ app.get('/', (req, res) => {
             addIds: '/api/add-harvested-ids/'
         }
     });
+});
+
+// Debug endpoints for troubleshooting
+app.get('/debug/files', (req, res) => {
+    try {
+        const files = ['steam_ids.json', 'steam_ids_unique.json', 'steam_ids_filtered.json'];
+        const fileContents = {};
+        
+        files.forEach(filename => {
+            try {
+                const filepath = path.join(__dirname, filename);
+                if (fs.existsSync(filepath)) {
+                    const content = fs.readFileSync(filepath, 'utf8');
+                    fileContents[filename] = {
+                        exists: true,
+                        content: content ? JSON.parse(content) : {},
+                        size: Buffer.byteLength(content, 'utf8')
+                    };
+                } else {
+                    fileContents[filename] = { exists: false };
+                }
+            } catch (err) {
+                fileContents[filename] = { exists: true, error: err.message };
+            }
+        });
+        
+        res.json({
+            timestamp: new Date().toISOString(),
+            files: fileContents
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/debug/restart-filter', async (req, res) => {
+    try {
+        console.log('[DEBUG] Manual restart of Filter Service requested');
+        
+        if (steamService.workers.filterService) {
+            console.log('[DEBUG] Stopping existing Filter Service...');
+            steamService.workers.filterService.stop();
+            await delay(2000); // Wait 2 seconds
+        }
+        
+        console.log('[DEBUG] Starting new Filter Service...');
+        const FilterService = require('./workers/filter-service');
+        steamService.workers.filterService = new FilterService();
+        steamService.workers.filterService.start();
+        
+        serviceStats.workers.filterService.running = true;
+        serviceStats.workers.filterService.startTime = new Date();
+        
+        res.json({
+            success: true,
+            message: 'Filter Service restarted',
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error(`[DEBUG] Error restarting Filter Service: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+app.post('/debug/clear-files', async (req, res) => {
+    try {
+        const { file } = req.body;
+        const allowedFiles = ['steam_ids.json', 'steam_ids_unique.json', 'steam_ids_filtered.json'];
+        
+        if (!file || !allowedFiles.includes(file)) {
+            return res.status(400).json({
+                error: 'Invalid file. Allowed: ' + allowedFiles.join(', ')
+            });
+        }
+        
+        const filepath = path.join(__dirname, file);
+        fs.writeFileSync(filepath, '{}', 'utf8');
+        
+        console.log(`[DEBUG] Cleared ${file}`);
+        
+        res.json({
+            success: true,
+            message: `Cleared ${file}`,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
 });
 
 app.post('/api/add-harvested-ids/', async (req, res) => {
